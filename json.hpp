@@ -39,7 +39,7 @@ namespace json {
         auto constexpr conditional_value = std::conditional_t<tp_condition, tp_type_t, decltype(std::ignore)>{};
 
         struct is_whitespace_fn {
-            auto constexpr operator()(const char p_char) const noexcept -> bool {
+            auto constexpr operator()[[nodiscard]](const char p_char) const noexcept -> bool {
                 return p_char == ' ' || p_char == '\n';
             }
         };
@@ -308,7 +308,7 @@ namespace json {
     
         struct read_fn {
             template <input_range_of<char> tp_input_range_of_char_t>
-            auto constexpr operator()(tp_input_range_of_char_t&& p_data)
+            auto constexpr operator()[[nodiscard]](tp_input_range_of_char_t&& p_data)
             const noexcept(noexcept(
                 read_t{
                     result_code::none,
@@ -328,6 +328,16 @@ namespace json {
                     entity_type::object,
                     std::forward<tp_input_range_of_char_t>(p_data)
                 };
+            }
+
+            template <typename tp_self_t>
+            auto constexpr operator()[[nodiscard]](
+                this tp_self_t                             p_self,
+                std::add_pointer_t<std::add_const_t<char>> p_data
+            )
+            noexcept(noexcept(std::forward<tp_self_t>(p_self)(std::string_view{p_data})))
+            -> decltype(std::forward<tp_self_t>(p_self)(std::string_view{p_data})) {
+                return std::forward<tp_self_t>(p_self)(std::string_view{p_data});
             }
         };
     }
@@ -418,7 +428,7 @@ namespace json {
         template <typename tp_derived_t>
         struct data_adaptor_base {
             template <class... tp_types_ts>
-            auto constexpr operator()(tp_types_ts&&... p_arguments)
+            auto constexpr operator()[[nodiscard]](tp_types_ts&&... p_arguments)
             const noexcept(noexcept(
                 partial<
                     tp_derived_t,
@@ -464,6 +474,7 @@ namespace json {
                 typename             tp_read_t,
                 input_range_of<char> tp_input_range_of_char_t
             >
+            requires (!input_range_of<tp_read_t, char>)
             auto constexpr operator()[[nodiscard]](
                 tp_read_t&&                p_read,
                 tp_input_range_of_char_t&& p_key
@@ -474,6 +485,7 @@ namespace json {
             }
 
             template <typename tp_read_t>
+            requires (!input_range_of<tp_read_t, char>)
             auto constexpr operator()[[nodiscard]](
                 tp_read_t&&                                p_read,
                 std::add_pointer_t<std::add_const_t<char>> p_key
@@ -618,7 +630,6 @@ noexcept(noexcept(
         std::forward<tp_data_adaptor_closure_t>(p_data_adaptor_closure),
         std::forward<tp_data_or_read_t>(p_data_or_read)
     );
-
 }
 
 #endif
