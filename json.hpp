@@ -16,8 +16,10 @@
 #include <concepts>
 #include <cstddef>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <ranges>
+#include <tuple>
 #include <type_traits>
 #include <utility>
 
@@ -195,6 +197,16 @@ namespace json {
                 return std::forward<tp_self_t>(p_self).impl(p_key);
             }
             template <typename tp_self_t>
+            auto constexpr at_key[[nodiscard]](
+                this tp_self_t&&                           p_self,
+                std::add_pointer_t<std::add_const_t<char>> p_key
+            ) -> read_t<std::ranges::subrange<
+                    std::ranges::iterator_t<tp_view_t>,
+                    std::ranges::sentinel_t<tp_view_t>>
+            > {
+                return std::forward<tp_self_t>(p_self).at_key(std::string_view{p_key});
+            }
+            template <typename tp_self_t>
             auto constexpr at_index[[nodiscard]](
                 this tp_self_t&&  p_self,
                 const std::size_t p_index
@@ -310,7 +322,7 @@ namespace json {
                     entity_type::object,
                     std::forward<tp_input_range_of_char_t>(p_data)
                 }
-            ){
+            ) {
                 return read_t{
                     result_code::none,
                     entity_type::object,
@@ -320,6 +332,293 @@ namespace json {
         };
     }
     auto constexpr read = detail::read_fn{};
+
+    namespace detail {
+        struct data_adaptor_closure_base {};
+        
+        template <
+            typename tp_adaptor_t,
+            class... tp_types_ts
+        >
+        struct partial : data_adaptor_closure_base {
+            std::tuple<tp_types_ts...> m_elements;
+
+            template <
+                typename       tp_self_t,
+                typename       tp_data_or_read_t,
+                std::size_t... tp_is
+            >
+            auto constexpr impl[[nodiscard]](
+                this tp_self_t&&    p_self,
+                tp_data_or_read_t&& p_data_or_read,
+                std::index_sequence<tp_is...>
+            )
+            noexcept(noexcept(
+                std::invoke(
+                    tp_adaptor_t{},
+                    std::declval<tp_data_or_read_t>(),
+                    std::get<tp_is>(std::declval<tp_self_t>().m_elements)...
+                )
+            ))
+            -> decltype(
+                std::invoke(
+                    tp_adaptor_t{},
+                    std::forward<tp_data_or_read_t>(p_data_or_read),
+                    std::get<tp_is>(std::forward<tp_self_t>(p_self).m_elements)...
+                )
+            ) {
+                return std::invoke(
+                    tp_adaptor_t{},
+                    std::forward<tp_data_or_read_t>(p_data_or_read),
+                    std::get<tp_is>(std::forward<tp_self_t>(p_self).m_elements)...
+                );
+            }
+
+            template <
+                typename tp_self_t,
+                typename tp_data_or_read_t
+            >
+            auto constexpr operator()[[nodiscard]](
+                this tp_self_t&&    p_self,
+                tp_data_or_read_t&& p_data_or_read
+            )
+            noexcept(noexcept(
+                std::declval<tp_self_t>().impl(
+                    std::declval<tp_data_or_read_t>(),
+                    std::index_sequence_for<tp_types_ts...>{}
+                )
+            ))
+            -> decltype(
+                std::forward<tp_self_t>(p_self).impl(
+                    std::forward<tp_data_or_read_t>(p_data_or_read),
+                    std::index_sequence_for<tp_types_ts...>{}
+                )
+            ) {
+                return std::forward<tp_self_t>(p_self).impl(
+                    std::forward<tp_data_or_read_t>(p_data_or_read),
+                    std::index_sequence_for<tp_types_ts...>{}
+                );
+            }
+
+            template <class... tp_types_inner_ts>
+            constexpr explicit partial(
+                decltype(std::ignore),
+                tp_types_inner_ts&&... p_arguments
+            )
+            noexcept(
+                std::is_nothrow_constructible_v<
+                    std::tuple<tp_types_inner_ts...>,
+                    tp_types_inner_ts...
+                >
+            )
+            : m_elements{std::forward<tp_types_inner_ts>(p_arguments)...}
+            {}
+        };
+
+        template <typename tp_derived_t>
+        struct data_adaptor_base {
+            template <class... tp_types_ts>
+            auto constexpr operator()(tp_types_ts&&... p_arguments)
+            const noexcept(noexcept(
+                partial<
+                    tp_derived_t,
+                    tp_types_ts...
+                >{
+                    std::ignore,
+                    std::declval<tp_types_ts>()...
+                }
+            ))
+            -> decltype(
+                partial<
+                    tp_derived_t,
+                    tp_types_ts...
+                >{
+                    std::ignore,
+                    std::forward<tp_types_ts>(p_arguments)...
+                }
+            ) {
+                return partial<
+                    tp_derived_t,
+                    tp_types_ts...
+                >{
+                    std::ignore,
+                    std::forward<tp_types_ts>(p_arguments)...
+                };
+            }
+        };
+
+        template <typename tp_type_t>
+        concept data_adaptor = std::derived_from<
+            std::remove_cvref_t<tp_type_t>,
+            data_adaptor_base<std::remove_cvref_t<tp_type_t>>
+        >;
+        template <typename tp_type_t>
+        concept data_adaptor_closure = std::derived_from<
+            std::remove_cvref_t<tp_type_t>,
+            data_adaptor_closure_base
+        >;
+
+        struct at_key_adaptor : data_adaptor_base<at_key_adaptor> {
+            using data_adaptor_base::operator();
+            template <
+                typename             tp_read_t,
+                input_range_of<char> tp_input_range_of_char_t
+            >
+            auto constexpr operator()[[nodiscard]](
+                tp_read_t&&                p_read,
+                tp_input_range_of_char_t&& p_key
+            )
+            const noexcept(noexcept(std::declval<tp_read_t>().at_key(std::declval<tp_input_range_of_char_t>())))
+            -> decltype(std::forward<tp_read_t>(p_read).at_key(std::forward<tp_input_range_of_char_t>(p_key))) {
+                return std::forward<tp_read_t>(p_read).at_key(std::forward<tp_input_range_of_char_t>(p_key));
+            }
+
+            template <typename tp_read_t>
+            auto constexpr operator()[[nodiscard]](
+                tp_read_t&&                                p_read,
+                std::add_pointer_t<std::add_const_t<char>> p_key
+            )
+            const noexcept(noexcept(
+                operator()(
+                    std::declval<tp_read_t>(),
+                    std::string_view{std::add_pointer_t<std::add_const_t<char>>{}}
+                )
+            ))
+            -> decltype(
+                operator()(
+                    std::forward<tp_read_t>(p_read),
+                    std::string_view{p_key}
+                )
+            ) {
+                return operator()(
+                    std::forward<tp_read_t>(p_read),
+                    std::string_view{p_key}
+                );
+            }
+
+            template <
+                typename             tp_data_t,
+                input_range_of<char> tp_input_range_of_char_t
+            >
+            auto constexpr operator()[[nodiscard]](
+                tp_data_t&&                p_data,
+                tp_input_range_of_char_t&& p_key
+            )
+            const noexcept(noexcept(
+                operator()(
+                    read(std::declval<tp_data_t>()),
+                    std::declval<tp_input_range_of_char_t>()
+                )
+            ))
+            -> decltype(
+                operator()(
+                    read(std::forward<tp_data_t>(p_data)),
+                    std::forward<tp_input_range_of_char_t>(p_key)
+                )
+            ) {
+                return operator()(
+                    read(std::forward<tp_data_t>(p_data)),
+                    std::forward<tp_input_range_of_char_t>(p_key)
+                );
+            }
+
+            template <typename tp_data_t>
+            auto constexpr operator()[[nodiscard]](
+                tp_data_t&&                                p_data,
+                std::add_pointer_t<std::add_const_t<char>> p_key
+            )
+            const noexcept(noexcept(
+                operator()(
+                    read(std::declval<tp_data_t>()),
+                    std::string_view{std::add_pointer_t<std::add_const_t<char>>{}}
+                )
+            ))
+            -> decltype(
+                operator()(
+                    read(std::forward<tp_data_t>(p_data)),
+                    std::string_view{p_key}
+                )
+            ) {
+                return operator()(
+                    read(std::forward<tp_data_t>(p_data)),
+                    std::string_view{p_key}
+                );
+            }
+        };
+    }
+    auto constexpr at_key = detail::at_key_adaptor{};
+
+    namespace detail {
+        struct at_index_adaptor : data_adaptor_base<at_index_adaptor> {
+            using data_adaptor_base::operator();
+            template <
+                typename      tp_read_t,
+                std::integral tp_integral_t
+            >
+            auto constexpr operator()[[nodiscard]](
+                tp_read_t&&   p_read,
+                tp_integral_t p_index
+            )
+            const noexcept(noexcept(std::declval<tp_read_t>().at_index(tp_integral_t{})))
+            -> decltype(std::forward<tp_read_t>(p_read).at_index(static_cast<std::size_t>(p_index))) {
+                return std::forward<tp_read_t>(p_read).at_index(static_cast<std::size_t>(p_index));
+            }
+            template <
+                typename      tp_data_t,
+                std::integral tp_integral_t
+            >
+            auto constexpr operator()[[nodiscard]](
+                tp_data_t&&   p_data,
+                tp_integral_t p_index
+            )
+            const noexcept(noexcept(read(std::declval<tp_data_t>()).at_index(tp_integral_t{})))
+            -> decltype(read(std::forward<tp_data_t>(p_data)).at_index(static_cast<std::size_t>(p_index))) {
+                return read(std::forward<tp_data_t>(p_data)).at_index(static_cast<std::size_t>(p_index));
+            }
+        };
+    }
+    auto constexpr at_index = detail::at_index_adaptor{};
+
+    namespace detail {
+        template <typename tp_type_t>
+        struct to_adaptor : data_adaptor_closure_base {
+            template <typename tp_read_t>
+            auto constexpr operator()[[nodiscard]](tp_read_t&& p_read)
+            const noexcept(noexcept(std::declval<tp_read_t>().template to<tp_type_t>()))
+            -> decltype(std::forward<tp_read_t>(p_read).template to<tp_type_t>()) {
+                return std::forward<tp_read_t>(p_read).template to<tp_type_t>();
+            }
+        };
+    }
+    template <typename tp_type_t>
+    auto constexpr to = detail::to_adaptor<tp_type_t>{};
+}
+
+template <
+    typename                           tp_data_or_read_t,
+    json::detail::data_adaptor_closure tp_data_adaptor_closure_t
+>
+auto constexpr operator|[[nodiscard]](
+    tp_data_or_read_t&&         p_data_or_read,
+    tp_data_adaptor_closure_t&& p_data_adaptor_closure
+)
+noexcept(noexcept(
+    std::invoke(
+        std::declval<tp_data_adaptor_closure_t>(),
+        std::declval<tp_data_or_read_t>()
+    )
+))
+-> decltype(
+    std::invoke(
+        std::forward<tp_data_adaptor_closure_t>(p_data_adaptor_closure),
+        std::forward<tp_data_or_read_t>(p_data_or_read)
+    )
+) {
+    return std::invoke(
+        std::forward<tp_data_adaptor_closure_t>(p_data_adaptor_closure),
+        std::forward<tp_data_or_read_t>(p_data_or_read)
+    );
+
 }
 
 #endif
